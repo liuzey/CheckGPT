@@ -1,0 +1,350 @@
+import os
+import sys
+import copy
+import h5py
+import time
+import argparse
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.utils.data as data
+from torch.utils.data import DataLoader
+
+from model import AttenLSTM
+
+parser = argparse.ArgumentParser(description='Demo of argparse')
+parser.add_argument('domain', type=str)
+parser.add_argument('task', type=int)
+parser.add_argument('--early', type=float, default=99.8)
+parser.add_argument('--save', type=int, default=1)
+parser.add_argument('--pretrain', type=int, default=0)
+parser.add_argument('--trans', type=int, default=0)
+parser.add_argument('--test', type=int, default=0)
+parser.add_argument('--mdomain', type=str, default="cs")
+parser.add_argument('--mtask', type=int, default=1)
+parser.add_argument('--tmode', type=int, default=0)
+parser.add_argument('--whole', type=int, default=0)
+parser.add_argument('--cont', type=int, default=0)
+parser.add_argument('--lstm', type=int, default=0)
+parser.add_argument('--prec', type=int, default=0)
+parser.add_argument('--adam', type=int, default=1)
+parser.add_argument('--seed', type=int, default=100)
+parser.add_argument('--dropout', type=float, default=0.5)
+parser.add_argument('--meta', type=int, default=0)
+args = parser.parse_args()
+
+DICT1 = {"cs": "CS", "literal": "LIT", "physics": "PHY"}
+DICT2 = {"cs": "a", "literal": "c", "physics": "b"}
+LOG_INTERVAL = 50
+PRETRAINED = bool(args.pretrain)
+TRANSFER = bool(args.trans)
+SEED = args.seed
+SGD_OR_ADAM = "adam" if args.adam else "sgd"
+LEARNING_RATE = 3e-4 if SGD_OR_ADAM == "adam" else 1e-3
+N_EPOCH = 200 if (TRANSFER or SGD_OR_ADAM == "sgd") else 100
+CONTINUE = args.cont
+PREC = args.prec
+ISLSTM = args.lstm
+BSET_ACC_DICT = {"CS1a": 99.84, "CS2a": 99.23, "CS3a": 98.54, "PHY1b": 99.82,
+                 "PHY2b": 98.01, "PHY3b": 99.20, "LIT1c": 99.82, "LIT2c": 98.63, "LIT3c": 98.43}
+BATCH_SIZE = 160 if (not TRANSFER and not ISLSTM) else 256+64
+EARLYSTOP = args.early
+SAVE = bool(args.save)
+TEST = bool(args.test)
+PRINT_WHOLE = bool(args.whole)
+TEST_SIZE = 256 if TEST else BATCH_SIZE
+# torch.backends.cudnn.deterministic = False
+# torch.backends.cudnn.benchmark = True
+
+domain = args.domain
+brief = DICT1[domain]
+task = str(args.task) + DICT2[domain]
+m_domain = args.mdomain
+m_task = str(args.mtask) + DICT2[m_domain]
+m_brief = DICT1[m_domain]
+t_mode = args.tmode
+
+if TRANSFER:
+    assert m_domain is not None
+
+class MyDataset(data.Dataset):
+    def __init__(self, archive, indexes=None):
+        # self.archive = h5py.File(archive, 'r')
+        # self.data = self.archive["data"]
+        # self.labels = self.archive["label"]
+        self.archive = archive
+        self.indexes = None
+        if not indexes is None:
+            with open(indexes, 'r') as f:
+                save_index = json.load(f)
+            self.indexes = save_index["indexes"]
+            self.length = len(self.indexes)
+            assert self.length == 100000
+        else:
+            self.length = len(h5py.File(self.archive, 'r')["data"])
+        self.dataset = None
+        self.labels = None
+        # with h5py.File(self.archive, 'r') as file:
+
+    def __getitem__(self, index):
+        # image = torch.from_numpy(self.data[index]).float().unsqueeze(0)
+        # label = torch.from_numpy(self.labels[index]).long()
+        # return image, label
+        if self.dataset is None:
+            self.dataset = h5py.File(self.archive, 'r')["data"]
+            self.labels = h5py.File(self.archive, 'r')["label"]
+        if not self.indexes is None:
+            ind = self.indexes[index]
+            x, y = torch.from_numpy(self.dataset[ind]).float(), torch.from_numpy(self.labels[ind]).long()
+        else:
+            x, y = torch.from_numpy(self.dataset[index]).float(), torch.from_numpy(self.labels[index]).long()
+        if not ISLSTM:
+            x = x.unsqueeze(0)
+        return x, y
+
+    def __len__(self):
+        # return len(self.labels)
+        return self.length
+
+
+class TransNet(nn.Module):
+    def __init__(self, host, mode=0):
+        super(TransNet, self).__init__()
+        self.host = host
+        self.mode = mode
+        self.dropout = nn.Dropout(p=0.1)
+        if not ISLSTM:
+            if self.mode == 0:
+                self.layers = copy.deepcopy(self.host.class_classifier)
+            else:
+                self.layers = copy.deepcopy(self.host.class_classifier[-1])
+        else:
+            self.layers = copy.deepcopy(self.host.fc)
+
+    def forward(self, x):
+        if not ISLSTM:
+            if self.mode == 0:
+                size_ = x.shape[-1] * x.shape[-2] * x.shape[-3]
+                x = x.view(-1, size_)
+            else:
+                x = x.squeeze(1)
+        x = self.layers(self.dropout(x))
+        return x
+
+
+def save_checkpoint(model, path, optimizer, scheduler, epoch, acc):
+    info_dict = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "lr_scheduler_state_dict": scheduler.state_dict(),
+        "last_epoch": epoch,
+        "best_acc": acc
+    }
+
+    torch.save(info_dict, path)
+    return
+
+
+def load_checkpoint(model, path, optimizer, scheduler):
+    cp = torch.load(path)
+    model.load_state_dict(cp["model_state_dict"], strict=True)
+    # model.load_state_dict(torch.load("./{}{}/{}_binary_dnn_literal_best.pth".format(brief, task, ISLSTM * "lstm"
+    #                                                                                   + "old")), strict=True)
+    optimizer.load_state_dict(cp["optimizer_state_dict"])
+    scheduler.load_state_dict(cp["lr_scheduler_state_dict"])
+    last_epoch = cp["last_epoch"]
+    best_acc = cp["best_acc"]
+    return last_epoch, best_acc
+
+
+def load_data(brief, task, domain, size_train=96, size_test=96):
+    if not TRANSFER:
+        dir_ = '/media/liuzey/1abc70ad-6416-437b-a38d-685c17f87db4/chatgpt/{}{}/{}{}{}.{}'
+        full_dataset = MyDataset(dir_.format(brief, task, domain, task, "", "h5"), indexes=dir_.format(brief, task, domain,
+                                                                                                 task, "_top50k", "json"))
+        # full_dataset = MyDataset('/media/liuzey/825A619E5A618FA9/chatgpt_files/{}{}.h5'.format(domain, task, PREC))
+        if task == "2b" and domain == "physics":
+            torch.random.manual_seed(128)
+        else:
+            torch.random.manual_seed(SEED)
+        train_size = int(0.8 * len(full_dataset))
+        test_size = len(full_dataset) - train_size
+        train_data, test_data = torch.utils.data.random_split(full_dataset, [train_size, test_size])
+    else:
+        if t_mode == 0:
+            pos = "second"
+        else:
+            pos = "first"
+        torch.random.manual_seed(SEED)
+        full_data = MyDataset('./transfer_learning/train/s{}{}_t{}{}.h5'.format(m_domain, args.mtask,
+                                                                                     domain, task))
+        train_size = 2000
+        test_size = len(full_data) - train_size
+
+        train_data, _ = torch.utils.data.random_split(full_data, [train_size, test_size])
+        test_data = MyDataset('./transfer_learning/test/s{}{}_t{}{}.h5'.format(m_domain, args.mtask,
+                                                                                     domain, task))
+
+    train_loader = DataLoader(dataset=train_data,
+                              num_workers=4,
+                              batch_size=size_train,
+                              drop_last=True,
+                              shuffle=True,
+                              pin_memory=True,
+                              prefetch_factor=2)
+    test_loader = DataLoader(dataset=test_data,
+                              num_workers=4,
+                              batch_size=size_test,
+                              drop_last=False,
+                              shuffle=False,
+                              pin_memory=True,
+                              prefetch_factor=2)
+    return train_loader, test_loader
+
+
+def test(model, dataloader, epoch, print_freq=1):
+    model.eval()
+    n_correct, correct_0, correct_1, sum_0, sum_1 = 0, 0, 0, 0, 0
+    start = time.time()
+
+    with torch.no_grad():
+        for i, (t_img, t_label) in enumerate(dataloader):
+            t_img, t_label = t_img.cuda(), t_label.cuda().squeeze(1)
+            class_output = model(t_img)
+            pred = torch.max(class_output.data, 1)
+            n_correct += (pred[1] == t_label).sum().item()
+            correct_0 += ((pred[1] == t_label) * (t_label == 0)).sum().item()
+            correct_1 += ((pred[1] == t_label) * (t_label == 1)).sum().item()
+            sum_0 += (t_label == 0).sum().item()
+            sum_1 += (t_label == 1).sum().item()
+            if i % (LOG_INTERVAL*print_freq) == 0 and PRINT_WHOLE and args.meta == 0 and not (TRANSFER and TEST):
+                print('Batch: [{}/{}], Time used: {:.4f}s'.format(i, len(dataloader), time.time() - start))
+
+    accu = float(n_correct) / len(dataloader.dataset) * 100
+    accu_0 = float(correct_0) / sum_0 * 100
+    accu_1 = float(correct_1) / sum_1 * 100
+    if PRINT_WHOLE:
+        print('{}{}， Epoch:{}, Test accuracy: {:.4f}%, Acc_GPT: {:.4f}%, Acc_Human: {:.4f}%'.format(args.task,
+                                                                                                    args.domain, epoch,
+                                                        accu, accu_0, accu_1))
+    return accu, accu_0, accu_1
+
+
+def train(model, optimizer, scheduler, dataloader, test_loader):
+    loss_class = torch.nn.CrossEntropyLoss()
+    scaler = torch.cuda.amp.GradScaler(enabled=True)
+
+    if CONTINUE:
+        last_epoch, best_acc = load_checkpoint(model, "./{}{}/{}_checkpoint.pth".format(brief, task, "lstm_nokey_50k"),
+                                               optimizer, scheduler)
+        best_acc = test(model, test_loader, -1)
+        print("Checkpoint Loaded.")
+    else:
+        last_epoch, best_acc = 1, 0
+
+    # model.load_state_dict(torch.load("./{}{}/{}_97925.pth".format(brief, task, "lstm_nokey_50k")), strict=True)
+
+    len_dataloader = len(dataloader)
+    for epoch in range(last_epoch, N_EPOCH + 1):
+        start = time.time()
+        model.train()
+        data_iter = iter(dataloader)
+        n_correct = 0
+
+        i = 1
+        while i < len_dataloader + 1:
+            data_source = next(data_iter)
+            optimizer.zero_grad()
+
+            img, label = data_source[0].cuda(), data_source[1].cuda().squeeze(1)
+
+            class_output = model(img)
+            # print(class_output.shape)
+            if False: # ISLSTM:
+                class_output = class_output[:, -1, :]
+
+            pred = torch.max(class_output.data, 1)
+            n_correct += (pred[1] == label).sum().item()
+            err = loss_class(class_output, label)
+
+            # if TRANSFER:
+            # err.backward()
+            # optimizer.step()
+            # else:
+            scaler.scale(err).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
+            if i % LOG_INTERVAL == 0 and PRINT_WHOLE:
+                print(
+                    'Epoch: [{}/{}], Batch: [{}/{}], Err: {:.4f}, Time used: {:.4f}s'.format(
+                        epoch, N_EPOCH, i, len_dataloader, err.item(), time.time() - start,
+                        ))
+            i += 1
+            # torch.cuda.empty_cache()
+
+        accu = float(n_correct) / (len(dataloader.dataset)) * 100
+        if PRINT_WHOLE:
+            print('{}_{}， Epoch:{}, Train accuracy: {:.4f}%'.format(brief, task, epoch, accu))
+        if not TRANSFER and SAVE:
+            save_checkpoint(model, "./{}{}/{}_checkpoint.pth".format(brief, task, "lstm_nokey_50k"),
+                            optimizer, scheduler, epoch, best_acc)
+        acc = test(model, test_loader, epoch)
+
+        if epoch % 1 == 0:
+            scheduler.step()
+            pass
+
+        if acc > best_acc:
+            old_acc, best_acc = best_acc, acc
+            if TRANSFER:
+                name = "./transfer_learning/saved_models/s_{}{}_t_{}{}_50k.pth".format(m_domain, m_task, domain, task)
+            else:
+                name = "./{}{}/lstm_nokey_50k_{}.pth".format(brief, task, int(best_acc*10))
+            if SAVE:
+                torch.save(model.state_dict(), name)
+            if not TRANSFER:
+                print("Best model saved.")
+        if (best_acc > EARLYSTOP and epoch > N_EPOCH // 5) or (best_acc >= max(BSET_ACC_DICT[brief+task] - 0.05, 98.05)
+                                                     and epoch > N_EPOCH // 2 and not TRANSFER and not CONTINUE):
+            break
+
+    return best_acc
+
+
+if __name__ == '__main__':
+    torch.random.manual_seed(SEED)
+    train_loader, test_loader = load_data(brief, task, domain, size_train=BATCH_SIZE, size_test=TEST_SIZE)
+    alex = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
+
+    if PRETRAINED:
+        # alex.load_state_dict(torch.load("./{}{}/binary_dnn_{}_saved.pth".format(brief, task, domain)), strict=True)
+        alex.load_state_dict(torch.load("./{}{}/lstm_nokey_50k_best.pth".format(brief, task)), strict=True)
+        if args.meta:
+            alex.load_state_dict(torch.load("./meta/Unified_Task123.pth".format(args.task)), strict=True)
+        model = alex
+
+    if TRANSFER:
+        alex.load_state_dict(torch.load("./{}{}/lstm_nokey_50k_best.pth".format(m_brief, m_task)), strict=True)
+        model = TransNet(alex, mode=t_mode)
+        del alex
+    else:
+        model = alex
+
+    if not TEST:
+        for param in model.parameters():
+            param.requires_grad = True
+
+    if SGD_OR_ADAM == "adam":
+        optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=5e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, N_EPOCH)
+    if not TEST:
+        best_acc = train(model, optimizer, scheduler, train_loader, test_loader)
+    else:
+        best_acc, _, _ = test(model, test_loader, 0)
+
+    if TRANSFER:
+        print("Mode: {}, S: {}, T: {}, Acc: {:.4f}%".format(t_mode, m_domain+m_task, domain+task, best_acc))
