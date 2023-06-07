@@ -20,10 +20,10 @@ task = args.task
 roberta = torch.hub.load('pytorch/fairseq', 'roberta.large').cuda()
 roberta.eval()
 
-with open("./{}{}/{}_gpt.json".format(brief, task, brief), 'r') as f1:
+with open("../GPABenchmark/{}_Task{}/{}_gpt.json".format(brief, task, brief), 'r') as f1:
     data1 = json.load(f1)
 
-with open("./{}{}/{}_ground.json".format(brief, task, brief), 'r') as f2:
+with open("../GPABenchmark/{}_Task{}/{}_ground.json".format(brief, task, brief), 'r') as f2:
     data2 = json.load(f2)
 
 print(len(list(data1.keys())))
@@ -32,7 +32,7 @@ print(len(list(data2.keys())))
 total_length = len(list(data1.keys())) + len(list(data2.keys()))
 
 start = time.time()
-data = h5py.File('./embeddings/{}{}/{}{}.h5'.format(brief, task, domain, task), 'w')
+data = h5py.File('./embeddings/{}{}.h5'.format(brief, task), 'w')
 data.create_dataset('data', (total_length, 512, 1024), dtype='f2')
 data.create_dataset('label', (total_length, 1), dtype='i')
 
