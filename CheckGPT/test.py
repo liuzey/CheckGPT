@@ -41,7 +41,7 @@ def eval_one(model, input):
 try:
     while True:
         a = input("Please input the text to be evaluated: (0 for gpt, 1 for human)\n")
-        if a == "exit":
+        if a == "exit" or a == "exit()":
             raise KeyboardInterrupt
         model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task1.pth"))
         print("- Decision of GPT-Written: {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.".format(*eval_one(model, a)))
