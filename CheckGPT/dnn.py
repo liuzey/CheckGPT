@@ -226,7 +226,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
         if PRINT_ALL:
             print('{}_TASK{}， Epoch:{}, Train accuracy: {:.4f}%'.format(domain, task, epoch, accu))
         if not TRANSFER and SAVE:
-            save_checkpoint(model, "./exp/Checkpoint_{}_Task{}.pth".format(domain, task),
+            save_checkpoint(model, "./exp/exp{}/Checkpoint_{}_Task{}.pth".format(ID, domain, task),
                             optimizer, scheduler, epoch, best_acc)
         acc = test(model, test_loader, epoch)
 
@@ -235,9 +235,9 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
         if acc > best_acc:
             old_acc, best_acc = best_acc, acc
             if TRANSFER:
-                name = "./saved_models/trans/s_{}{}_t_{}{}.pth".format(m_domain, m_task, domain, task)
+                name = "./exp/exp{}/Best_s_{}{}_t_{}{}.pth".format(ID, m_domain, m_task, domain, task)
             else:
-                name = "./saved_models/scratch/{}_Task{}.pth".format(domain, task)
+                name = "./exp/exp{}/Best_{}_Task{}.pth".format(ID, domain, task)
             if SAVE:
                 torch.save(model.state_dict(), name)
             if not TRANSFER:
