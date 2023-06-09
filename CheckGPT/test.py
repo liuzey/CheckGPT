@@ -20,9 +20,10 @@ class CustomRobertaForPipeline(RobertaPreTrainedModel):
         return logits
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 tokenizer = RobertaTokenizer.from_pretrained("roberta-large")
 config = RobertaConfig.from_pretrained("roberta-large", num_labels=2)
-model = CustomRobertaForPipeline.from_pretrained("roberta-large", config=config).cuda()
+model = CustomRobertaForPipeline.from_pretrained("roberta-large", config=config).to(device)
 model.eval()
 
 
@@ -32,7 +33,7 @@ def eval_one(model, input):
     if len(tokens) > 512:
         tokens = tokens[:512]
         print("!!!Input too long. Truncated to first 512 tokens.")
-    outputs = model(torch.tensor(tokens).unsqueeze(0).cuda())
+    outputs = model(torch.tensor(tokens).unsqueeze(0).to(device))
     pred = torch.max(outputs.data, 1)[1]
     (gpt_prob, hum_prob) = F.softmax(outputs.data, dim=1)[0]
     return pred[0].data, 100 * gpt_prob, 100 * hum_prob
