@@ -42,6 +42,7 @@ if not os.path.exists("./exp/{}".format(ID)):
     os.mkdir("./exp/{}".format(ID))
 
 SEED = args.seed
+DEVICE_NAME = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PRETRAINED = bool(args.pretrain)
 TRANSFER = bool(args.trans)
@@ -254,7 +255,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
 if __name__ == '__main__':
     torch.random.manual_seed(SEED)
     train_loader, test_loader = load_data(domain, task, size_train=BATCH_SIZE, size_test=TEST_SIZE)
-    rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).to(DEVICE)
+    rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2, device=DEVICE_NAME).to(DEVICE)
 
     config = ConfigParser()
 
