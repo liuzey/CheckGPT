@@ -17,9 +17,11 @@ from model import AttenLSTM
 parser = argparse.ArgumentParser(description='Demo of argparse')
 parser.add_argument('domain', type=str)
 parser.add_argument('task', type=int)
+parser.add_argument('expid', type=int)
 parser.add_argument('--early', type=float, default=99.8)
 parser.add_argument('--save', type=int, default=1)
 parser.add_argument('--pretrain', type=int, default=0)
+parser.add_argument('--dataamount', type=int, default=1000)
 parser.add_argument('--trans', type=int, default=0)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--mdomain', type=str, default="cs")
@@ -27,43 +29,34 @@ parser.add_argument('--mtask', type=int, default=1)
 parser.add_argument('--tmode', type=int, default=0)
 parser.add_argument('--whole', type=int, default=0)
 parser.add_argument('--cont', type=int, default=0)
-parser.add_argument('--lstm', type=int, default=0)
-parser.add_argument('--prec', type=int, default=0)
 parser.add_argument('--adam', type=int, default=1)
 parser.add_argument('--seed', type=int, default=100)
 parser.add_argument('--dropout', type=float, default=0.5)
+parser.add_argument('--batchsize', type=int, default=320)
 parser.add_argument('--meta', type=int, default=0)
 args = parser.parse_args()
 
-DICT1 = {"cs": "CS", "literal": "LIT", "physics": "PHY"}
-DICT2 = {"cs": "a", "literal": "c", "physics": "b"}
 LOG_INTERVAL = 50
 PRETRAINED = bool(args.pretrain)
 TRANSFER = bool(args.trans)
 SEED = args.seed
 SGD_OR_ADAM = "adam" if args.adam else "sgd"
-LEARNING_RATE = 3e-4 if SGD_OR_ADAM == "adam" else 1e-3
+LEARNING_RATE = 2e-4 if SGD_OR_ADAM == "adam" else 1e-3
 N_EPOCH = 200 if (TRANSFER or SGD_OR_ADAM == "sgd") else 100
 CONTINUE = args.cont
-PREC = args.prec
-ISLSTM = args.lstm
-BSET_ACC_DICT = {"CS1a": 99.84, "CS2a": 99.23, "CS3a": 98.54, "PHY1b": 99.82,
-                 "PHY2b": 98.01, "PHY3b": 99.20, "LIT1c": 99.82, "LIT2c": 98.63, "LIT3c": 98.43}
-BATCH_SIZE = 160 if (not TRANSFER and not ISLSTM) else 256+64
+BATCH_SIZE = args.batchsize
 EARLYSTOP = args.early
 SAVE = bool(args.save)
 TEST = bool(args.test)
 PRINT_WHOLE = bool(args.whole)
-TEST_SIZE = 256 if TEST else BATCH_SIZE
+TEST_SIZE = 512 if TEST else BATCH_SIZE
 # torch.backends.cudnn.deterministic = False
 # torch.backends.cudnn.benchmark = True
 
 domain = args.domain
-brief = DICT1[domain]
-task = str(args.task) + DICT2[domain]
+task = str(args.task)
 m_domain = args.mdomain
-m_task = str(args.mtask) + DICT2[m_domain]
-m_brief = DICT1[m_domain]
+m_task = str(args.mtask)
 t_mode = args.tmode
 
 if TRANSFER:
@@ -71,17 +64,9 @@ if TRANSFER:
 
 
 class MyDataset(data.Dataset):
-    def __init__(self, archive, indexes=None):
+    def __init__(self, archive):
         self.archive = archive
-        self.indexes = None
-        if not indexes is None:
-            with open(indexes, 'r') as f:
-                save_index = json.load(f)
-            self.indexes = save_index["indexes"]
-            self.length = len(self.indexes)
-            assert self.length == 100000
-        else:
-            self.length = len(h5py.File(self.archive, 'r')["data"])
+        self.length = len(h5py.File(self.archive, 'r')["data"])
         self.dataset = None
         self.labels = None
 
@@ -89,13 +74,7 @@ class MyDataset(data.Dataset):
         if self.dataset is None:
             self.dataset = h5py.File(self.archive, 'r')["data"]
             self.labels = h5py.File(self.archive, 'r')["label"]
-        if not self.indexes is None:
-            ind = self.indexes[index]
-            x, y = torch.from_numpy(self.dataset[ind]).float(), torch.from_numpy(self.labels[ind]).long()
-        else:
-            x, y = torch.from_numpy(self.dataset[index]).float(), torch.from_numpy(self.labels[index]).long()
-        if not ISLSTM:
-            x = x.unsqueeze(0)
+        x, y = torch.from_numpy(self.dataset[index]).float(), torch.from_numpy(self.labels[index]).long()
         return x, y
 
     def __len__(self):
@@ -107,22 +86,10 @@ class TransNet(nn.Module):
         super(TransNet, self).__init__()
         self.host = host
         self.mode = mode
-        self.dropout = nn.Dropout(p=0.1)
-        if not ISLSTM:
-            if self.mode == 0:
-                self.layers = copy.deepcopy(self.host.class_classifier)
-            else:
-                self.layers = copy.deepcopy(self.host.class_classifier[-1])
-        else:
-            self.layers = copy.deepcopy(self.host.fc)
+        self.dropout = nn.Dropout(p=0.05)
+        self.layers = copy.deepcopy(self.host.fc)
 
     def forward(self, x):
-        if not ISLSTM:
-            if self.mode == 0:
-                size_ = x.shape[-1] * x.shape[-2] * x.shape[-3]
-                x = x.view(-1, size_)
-            else:
-                x = x.squeeze(1)
         x = self.layers(self.dropout(x))
         return x
 
@@ -152,8 +119,8 @@ def load_checkpoint(model, path, optimizer, scheduler):
 
 def load_data(brief, task, domain, size_train=96, size_test=96):
     if not TRANSFER:
-        dir_ = './embeddings/{}{}.{}'
-        full_dataset = MyDataset(dir_.format(brief, task, "h5"), indexes=dir_.format(brief, task, "json"))
+        dir_ = './embeddings/{}{}_{}.{}'
+        full_dataset = MyDataset(dir_.format(brief, task, args.dataamount, "h5"))
         torch.random.manual_seed(args.seed)
         train_size = int(0.8 * len(full_dataset))
         test_size = len(full_dataset) - train_size
@@ -162,7 +129,7 @@ def load_data(brief, task, domain, size_train=96, size_test=96):
         torch.random.manual_seed(SEED)
         full_data = MyDataset('./embeddings/s{}{}_t{}{}.h5'.format(m_domain, args.mtask,
                                                                                      domain, task))
-        train_size = 1000
+        train_size = args.dataamount
         test_size = len(full_data) - train_size
 
         train_data, _ = torch.utils.data.random_split(full_data, [train_size, test_size])
@@ -264,9 +231,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
                             optimizer, scheduler, epoch, best_acc)
         acc = test(model, test_loader, epoch)
 
-        if epoch % 1 == 0:
-            scheduler.step()
-            pass
+        scheduler.step()
 
         if acc > best_acc:
             old_acc, best_acc = best_acc, acc
@@ -278,8 +243,8 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
                 torch.save(model.state_dict(), name)
             if not TRANSFER:
                 print("Best model saved.")
-        if (best_acc > EARLYSTOP and epoch > N_EPOCH // 5) or (best_acc >= max(BSET_ACC_DICT[brief+task] - 0.05, 98.05)
-                                                     and epoch > N_EPOCH // 2 and not TRANSFER and not CONTINUE):
+
+        if EARLYSTOP > 0 and best_acc > EARLYSTOP:
             break
 
     return best_acc
@@ -288,20 +253,19 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
 if __name__ == '__main__':
     torch.random.manual_seed(SEED)
     train_loader, test_loader = load_data(brief, task, domain, size_train=BATCH_SIZE, size_test=TEST_SIZE)
-    alex = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
+    rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
 
     if PRETRAINED:
-        alex.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(brief, task)), strict=True)
+        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(brief, task)), strict=True)
         if args.meta:
-            alex.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth".format(args.task)), strict=True)
-        model = alex
+            rnn.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth"), strict=True)
 
     if TRANSFER:
-        alex.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(m_brief, m_task)), strict=True)
-        model = TransNet(alex, mode=t_mode)
-        del alex
+        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(m_brief, m_task)), strict=True)
+        model = TransNet(rnn, mode=t_mode)
+        del rnn
     else:
-        model = alex
+        model = rnn
 
     if not TEST:
         for param in model.parameters():
@@ -312,6 +276,7 @@ if __name__ == '__main__':
     else:
         optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=0.9, weight_decay=5e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, N_EPOCH)
+
     if not TEST:
         best_acc = train(model, optimizer, scheduler, train_loader, test_loader)
     else:

@@ -16,10 +16,9 @@ parser.add_argument('task', type=str)
 parser.add_argument('--pairs', type=int, default=0)
 args = parser.parse_args()
 
-domain = args.domain
+domain = args.domainar
 brief = args.brief
 task = args.task
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 roberta = torch.hub.load('pytorch/fairseq', 'roberta.large').to(device)
 roberta.eval()
@@ -35,7 +34,7 @@ f2.close()
 print(len(list(data1.keys())))
 print(len(list(data2.keys())))
 too_long = 0
-total_length = args.number if args.number else len(list(data1.keys())) + len(list(data2.keys()))
+total_length = 2 * args.pairs if args.pairs else len(list(data1.keys())) + len(list(data2.keys()))
 
 start = time.time()
 data = h5py.File('./embeddings/{}{}_{}.h5'.format(brief, task, total_length), 'w')
@@ -72,6 +71,9 @@ for i, (gpt, hum) in enumerate(zip(data1.values(), data2.values())):
         print("{}{} at {}th pair. Time used: {}s. Outliers: {}".format(domain, task, i, time.time()-start, too_long))
 
     i += 1
+    if i >= args.pairs:
+        break
+
 data.close()
 
 
