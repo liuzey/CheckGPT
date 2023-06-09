@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description='Demo of argparse')
 parser.add_argument('domain', type=str)
 parser.add_argument('brief', type=str)
 parser.add_argument('task', type=str)
-parser.add_argument('--number', type=int, default=0)
+parser.add_argument('--pairs', type=int, default=0)
 args = parser.parse_args()
 
 domain = args.domain
@@ -52,50 +52,26 @@ def fetch_representation(text):
     return last_layer_features
 
 
-for gpt, hum in zip(data1.values(), data2.values()):
+for i, (gpt, hum) in enumerate(zip(data1.values(), data2.values())):
     gpt_features, hum_features = fetch_representation(gpt), fetch_representation(hum)
 
     if gpt_features is None or hum_features is None:
         too_long += 1
         continue
 
-        length = int(last_layer_features.shape[1])
+    gpt_features_ = F.pad(gpt_features.last_hidden_state, (0, 0, 0, 512 - gpt_features.size(1)))
+    hum_features_ = F.pad(hum_features.last_hidden_state, (0, 0, 0, 512 - hum_features.size(1)))
 
-        padding = torch.zeros(512, 1024, dtype=torch.float64)
-        padding[:length] = last_layer_features
+    data["data"][2 * i] = gpt_features_.clone().detach().cpu()
+    data["label"][2 * i] = torch.zeros(1)
 
-        data["data"][i] = padding.clone().detach().cpu()
-        data["label"][i] = torch.zeros(1)
+    data["data"][2 * i + 1] = hum_features_.clone().detach().cpu()
+    data["label"][2 * i + 1] = torch.ones(1)
 
-    if i % 500 == 0:
-        print("{}{} at {} at data1. Time used: {}s. Outliers: {}".format(domain, task, i, time.time()-start, too_long))
-
-    i += 1
-
-
-for item in data2.values():
-    tokens = roberta.encode(item)
-    # print(tokens)
-    if len(tokens) > 512:
-        too_long += 1
-        continue
-
-    if i >= skip:
-        last_layer_features = roberta.extract_features(tokens)
-        # print(last_layer_features.shape)
-        length = int(last_layer_features.shape[1])
-
-        padding = torch.zeros(512, 1024, dtype=torch.float64)
-        padding[:length] = last_layer_features
-
-        data["data"][i] = padding.clone().detach().cpu()
-        data["label"][i] = torch.ones(1)
-
-    if i % 500 == 0:
-        print("{}{} at {} at data2. Time used: {}s. Outliers: {}".format(domain, task, i, time.time() - start, too_long))
+    if i % 200 == 0:
+        print("{}{} at {}th pair. Time used: {}s. Outliers: {}".format(domain, task, i, time.time()-start, too_long))
 
     i += 1
-
 data.close()
 
 
