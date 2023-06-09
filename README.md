@@ -17,7 +17,7 @@ The official repository of paper: "Check Me If You Can: Detecting ChatGPT-Genera
 Data structure: { {KEY}:{TEXT} }. You may use your own data following this structure.
 
 ## Features
-To turn text into features, use *features.py*.
+To turn text into features, use *features.py*[CheckGPT/features.py].
 
 ## Installation
 Run
