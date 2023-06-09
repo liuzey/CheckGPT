@@ -37,9 +37,10 @@ too_long = 0
 total_length = 2 * args.pairs if args.pairs else len(list(data1.keys())) + len(list(data2.keys()))
 
 start = time.time()
-data = h5py.File('./embeddings/{}{}_{}.h5'.format(brief, task, total_length), 'w')
+data = h5py.File('./embeddings/{}_TASK{}_{}.h5'.format(brief, task, total_length), 'w')
 data.create_dataset('data', (total_length, 512, 1024), dtype='f4')
 data.create_dataset('label', (total_length, 1), dtype='i')
+
 
 
 def fetch_representation(text):

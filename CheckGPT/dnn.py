@@ -1,6 +1,4 @@
 import os
-import sys
-import json
 import copy
 import h5py
 import time
@@ -23,11 +21,11 @@ parser.add_argument('--save', type=int, default=1)
 parser.add_argument('--pretrain', type=int, default=0)
 parser.add_argument('--dataamount', type=int, default=1000)
 parser.add_argument('--trans', type=int, default=0)
+parser.add_argument('--splitr', type=float, default=0.8)
 parser.add_argument('--test', type=int, default=0)
 parser.add_argument('--mdomain', type=str, default="cs")
 parser.add_argument('--mtask', type=int, default=1)
-parser.add_argument('--tmode', type=int, default=0)
-parser.add_argument('--whole', type=int, default=0)
+parser.add_argument('--printall', type=int, default=0)
 parser.add_argument('--cont', type=int, default=0)
 parser.add_argument('--adam', type=int, default=1)
 parser.add_argument('--seed', type=int, default=100)
@@ -37,9 +35,14 @@ parser.add_argument('--meta', type=int, default=0)
 args = parser.parse_args()
 
 LOG_INTERVAL = 50
+ID = args.expid
+
+if not os.path.exists("./exp/exp{}".format(ID)):
+    os.mkdir("./exp/exp{}".format(ID))
+
+SEED = args.seed
 PRETRAINED = bool(args.pretrain)
 TRANSFER = bool(args.trans)
-SEED = args.seed
 SGD_OR_ADAM = "adam" if args.adam else "sgd"
 LEARNING_RATE = 2e-4 if SGD_OR_ADAM == "adam" else 1e-3
 N_EPOCH = 200 if (TRANSFER or SGD_OR_ADAM == "sgd") else 100
@@ -48,16 +51,13 @@ BATCH_SIZE = args.batchsize
 EARLYSTOP = args.early
 SAVE = bool(args.save)
 TEST = bool(args.test)
-PRINT_WHOLE = bool(args.whole)
+PRINT_ALL = bool(args.printall)
 TEST_SIZE = 512 if TEST else BATCH_SIZE
 # torch.backends.cudnn.deterministic = False
 # torch.backends.cudnn.benchmark = True
 
-domain = args.domain
-task = str(args.task)
-m_domain = args.mdomain
-m_task = str(args.mtask)
-t_mode = args.tmode
+domain, task = args.domain, str(args.task)
+m_domain, m_task = args.mdomain, str(args.mtask)
 
 if TRANSFER:
     assert m_domain is not None
@@ -67,8 +67,7 @@ class MyDataset(data.Dataset):
     def __init__(self, archive):
         self.archive = archive
         self.length = len(h5py.File(self.archive, 'r')["data"])
-        self.dataset = None
-        self.labels = None
+        self.dataset, self.labels = None, None
 
     def __getitem__(self, index):
         if self.dataset is None:
@@ -117,12 +116,12 @@ def load_checkpoint(model, path, optimizer, scheduler):
     return last_epoch, best_acc
 
 
-def load_data(brief, task, domain, size_train=96, size_test=96):
+def load_data(domain, task, size_train=96, size_test=96):
     if not TRANSFER:
-        dir_ = './embeddings/{}{}_{}.{}'
-        full_dataset = MyDataset(dir_.format(brief, task, args.dataamount, "h5"))
+        dir_ = './embeddings/{}_TASK{}_{}.{}'
+        full_dataset = MyDataset(dir_.format(domain, task, args.dataamount, "h5"))
         torch.random.manual_seed(args.seed)
-        train_size = int(0.8 * len(full_dataset))
+        train_size = int(args.splitr * len(full_dataset))
         test_size = len(full_dataset) - train_size
         train_data, test_data = torch.utils.data.random_split(full_dataset, [train_size, test_size])
     else:
@@ -168,13 +167,13 @@ def test(model, dataloader, epoch, print_freq=1):
             correct_1 += ((pred[1] == t_label) * (t_label == 1)).sum().item()
             sum_0 += (t_label == 0).sum().item()
             sum_1 += (t_label == 1).sum().item()
-            if i % (LOG_INTERVAL*print_freq) == 0 and PRINT_WHOLE and args.meta == 0 and not (TRANSFER and TEST):
+            if i % (LOG_INTERVAL*print_freq) == 0 and PRINT_ALL:
                 print('Batch: [{}/{}], Time used: {:.4f}s'.format(i, len(dataloader), time.time() - start))
 
     accu = float(n_correct) / len(dataloader.dataset) * 100
     accu_0 = float(correct_0) / sum_0 * 100
     accu_1 = float(correct_1) / sum_1 * 100
-    if PRINT_WHOLE:
+    if PRINT_ALL:
         print('{}{}， Epoch:{}, Test accuracy: {:.4f}%, Acc_GPT: {:.4f}%, Acc_Human: {:.4f}%'.format(args.task,
                                                                                                     args.domain, epoch,
                                                         accu, accu_0, accu_1))
@@ -186,7 +185,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
     scaler = torch.cuda.amp.GradScaler(enabled=True)
 
     if CONTINUE:
-        last_epoch, best_acc = load_checkpoint(model, "./checkpoints/{}_Task{}.pth".format(brief, task),
+        last_epoch, best_acc = load_checkpoint(model, "./exp/{}_Task{}.pth".format(domain, task),
                                                optimizer, scheduler)
         best_acc = test(model, test_loader, -1)
         print("Checkpoint Loaded.")
@@ -215,7 +214,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
             scaler.step(optimizer)
             scaler.update()
 
-            if i % LOG_INTERVAL == 0 and PRINT_WHOLE:
+            if i % LOG_INTERVAL == 0 and PRINT_ALL:
                 print(
                     'Epoch: [{}/{}], Batch: [{}/{}], Err: {:.4f}, Time used: {:.4f}s'.format(
                         epoch, N_EPOCH, i, len_dataloader, err.item(), time.time() - start,
@@ -224,10 +223,10 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
             # torch.cuda.empty_cache()
 
         accu = float(n_correct) / (len(dataloader.dataset)) * 100
-        if PRINT_WHOLE:
-            print('{}_{}， Epoch:{}, Train accuracy: {:.4f}%'.format(brief, task, epoch, accu))
+        if PRINT_ALL:
+            print('{}_TASK{}， Epoch:{}, Train accuracy: {:.4f}%'.format(domain, task, epoch, accu))
         if not TRANSFER and SAVE:
-            save_checkpoint(model, "./checkpoints/{}_Task{}.pth".format(brief, task),
+            save_checkpoint(model, "./exp/Checkpoint_{}_Task{}.pth".format(domain, task),
                             optimizer, scheduler, epoch, best_acc)
         acc = test(model, test_loader, epoch)
 
@@ -238,7 +237,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
             if TRANSFER:
                 name = "./saved_models/trans/s_{}{}_t_{}{}.pth".format(m_domain, m_task, domain, task)
             else:
-                name = "./saved_models/scratch/{}_Task{}.pth".format(brief, task)
+                name = "./saved_models/scratch/{}_Task{}.pth".format(domain, task)
             if SAVE:
                 torch.save(model.state_dict(), name)
             if not TRANSFER:
@@ -252,17 +251,17 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
 
 if __name__ == '__main__':
     torch.random.manual_seed(SEED)
-    train_loader, test_loader = load_data(brief, task, domain, size_train=BATCH_SIZE, size_test=TEST_SIZE)
+    train_loader, test_loader = load_data(domain, task, size_train=BATCH_SIZE, size_test=TEST_SIZE)
     rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
 
     if PRETRAINED:
-        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(brief, task)), strict=True)
+        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(domain, task)), strict=True)
         if args.meta:
             rnn.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth"), strict=True)
 
     if TRANSFER:
-        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(m_brief, m_task)), strict=True)
-        model = TransNet(rnn, mode=t_mode)
+        rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(m_domain, m_task)), strict=True)
+        model = TransNet(rnn)
         del rnn
     else:
         model = rnn
@@ -283,4 +282,4 @@ if __name__ == '__main__':
         best_acc, _, _ = test(model, test_loader, 0)
 
     if TRANSFER:
-        print("Mode: {}, S: {}, T: {}, Acc: {:.4f}%".format(t_mode, m_domain+m_task, domain+task, best_acc))
+        print("Transfer Learning, S: {}, T: {}, Acc: {:.4f}%".format(m_domain+m_task, domain+task, best_acc))
