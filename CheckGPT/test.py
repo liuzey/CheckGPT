@@ -5,11 +5,11 @@ from model import AttenLSTM
 
 
 class CustomRobertaForPipeline(RobertaPreTrainedModel):
-    def __init__(self, config):
+    def __init__(self, config, device="gpu"):
         super().__init__(config)
         self.roberta = RobertaModel(config)
         self.classifier = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=0.5, bidirectional=True,
-                              num_layers=2)
+                              num_layers=2, device=device)
 
     def forward(self, input_ids, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None,
                 inputs_embeds=None):
@@ -20,10 +20,11 @@ class CustomRobertaForPipeline(RobertaPreTrainedModel):
         return logits
 
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device_name = "cuda" if torch.cuda.is_available() else "cpu"
+device = torch.device(device_name)
 tokenizer = RobertaTokenizer.from_pretrained("roberta-large")
 config = RobertaConfig.from_pretrained("roberta-large", num_labels=2)
-model = CustomRobertaForPipeline.from_pretrained("roberta-large", config=config).to(device)
+model = CustomRobertaForPipeline.from_pretrained("roberta-large", config=config, device=device_name).to(device)
 model.eval()
 
 
@@ -41,7 +42,7 @@ def eval_one(model, input):
 try:
     while True:
         a = input("Please input the text to be evaluated: (0 for gpt, 1 for human)\n")
-        if a == "exit" or a == "exit()":
+        if a == "exit":
             raise KeyboardInterrupt
         model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task1.pth"))
         print("- Decision of GPT-Written: {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.".format(*eval_one(model, a)))
