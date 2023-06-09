@@ -44,13 +44,13 @@ try:
         a = input("Please input the text to be evaluated: (0 for gpt, 1 for human)\n")
         if a == "exit":
             raise KeyboardInterrupt
-        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task1.pth"))
+        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task1.pth"), map_location=device)
         print("- Decision of GPT-Written: {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.".format(*eval_one(model, a)))
-        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task2.pth"))
+        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task2.pth"), map_location=device)
         print("- Decision of GPT-Completed: {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.".format(*eval_one(model, a)))
-        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task3.pth"))
+        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task3.pth"), map_location=device)
         print("- Decision of GPT-Polished: {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.".format(*eval_one(model, a)))
-        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth"))
+        model.classifier.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth"), map_location=device)
         print("- Decision of GPT-Generated (any kind): {}, Probability: GPT: {:.4f}%, Human: {:.4f}%.\n".format(*eval_one(model, a)))
 except KeyboardInterrupt:
     exit()
