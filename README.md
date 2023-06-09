@@ -22,7 +22,7 @@ To turn text into features, use [*features.py*](CheckGPT/features.py).
 ## Installation
 Run
 ```bash
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Usage
