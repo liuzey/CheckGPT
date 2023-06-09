@@ -42,6 +42,7 @@ if not os.path.exists("./exp/{}".format(ID)):
     os.mkdir("./exp/{}".format(ID))
 
 SEED = args.seed
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 PRETRAINED = bool(args.pretrain)
 TRANSFER = bool(args.trans)
 SGD_OR_ADAM = "adam" if args.adam else "sgd"
@@ -160,7 +161,7 @@ def test(model, dataloader, epoch, print_freq=1):
 
     with torch.no_grad():
         for i, (t_img, t_label) in enumerate(dataloader):
-            t_img, t_label = t_img.cuda(), t_label.cuda().squeeze(1)
+            t_img, t_label = t_img.to(DEVICE), t_label.to(DEVICE).squeeze(1)
             class_output = model(t_img)
             pred = torch.max(class_output.data, 1)
             n_correct += (pred[1] == t_label).sum().item()
@@ -205,7 +206,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
             data_source = next(data_iter)
             optimizer.zero_grad()
 
-            img, label = data_source[0].cuda(), data_source[1].cuda().squeeze(1)
+            img, label = data_source[0].to(DEVICE), data_source[1].to(DEVICE).squeeze(1)
 
             class_output = model(img)
             pred = torch.max(class_output.data, 1)
@@ -253,7 +254,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
 if __name__ == '__main__':
     torch.random.manual_seed(SEED)
     train_loader, test_loader = load_data(domain, task, size_train=BATCH_SIZE, size_test=TEST_SIZE)
-    rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
+    rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).to(DEVICE)
 
     config = ConfigParser()
 
@@ -262,10 +263,10 @@ if __name__ == '__main__':
     for key, value in vars(args).items():
         config.set('main', key, str(value))
 
-    with open('config.ini', 'w') as f:
+    with open('./exp/{}/config.ini'.format(ID), 'w') as f:
         config.write(f)
 
-    if PRETRAINED:
+    if PRETRAINED or TEST:
         rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(domain, task)), strict=True)
         if args.meta:
             rnn.load_state_dict(torch.load("../Pretrained/Unified_Task123.pth"), strict=True)
