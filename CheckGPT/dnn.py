@@ -9,13 +9,14 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.utils.data as data
 from torch.utils.data import DataLoader
+from configparser import ConfigParser
 
 from model import AttenLSTM
 
 parser = argparse.ArgumentParser(description='Demo of argparse')
 parser.add_argument('domain', type=str)
 parser.add_argument('task', type=int)
-parser.add_argument('expid', type=int)
+parser.add_argument('expid', type=str)
 parser.add_argument('--early', type=float, default=99.8)
 parser.add_argument('--save', type=int, default=1)
 parser.add_argument('--pretrain', type=int, default=0)
@@ -23,9 +24,9 @@ parser.add_argument('--dataamount', type=int, default=1000)
 parser.add_argument('--trans', type=int, default=0)
 parser.add_argument('--splitr', type=float, default=0.8)
 parser.add_argument('--test', type=int, default=0)
-parser.add_argument('--mdomain', type=str, default="cs")
+parser.add_argument('--mdomain', type=str, default="CS")
 parser.add_argument('--mtask', type=int, default=1)
-parser.add_argument('--printall', type=int, default=0)
+parser.add_argument('--printall', type=int, default=1)
 parser.add_argument('--cont', type=int, default=0)
 parser.add_argument('--adam', type=int, default=1)
 parser.add_argument('--seed', type=int, default=100)
@@ -37,8 +38,8 @@ args = parser.parse_args()
 LOG_INTERVAL = 50
 ID = args.expid
 
-if not os.path.exists("./exp/exp{}".format(ID)):
-    os.mkdir("./exp/exp{}".format(ID))
+if not os.path.exists("./exp/{}".format(ID)):
+    os.mkdir("./exp/{}".format(ID))
 
 SEED = args.seed
 PRETRAINED = bool(args.pretrain)
@@ -226,7 +227,7 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
         if PRINT_ALL:
             print('{}_TASK{}， Epoch:{}, Train accuracy: {:.4f}%'.format(domain, task, epoch, accu))
         if not TRANSFER and SAVE:
-            save_checkpoint(model, "./exp/exp{}/Checkpoint_{}_Task{}.pth".format(ID, domain, task),
+            save_checkpoint(model, "./exp/{}/Checkpoint_{}_Task{}.pth".format(ID, domain, task),
                             optimizer, scheduler, epoch, best_acc)
         acc = test(model, test_loader, epoch)
 
@@ -235,9 +236,9 @@ def train(model, optimizer, scheduler, dataloader, test_loader):
         if acc > best_acc:
             old_acc, best_acc = best_acc, acc
             if TRANSFER:
-                name = "./exp/exp{}/Best_s_{}{}_t_{}{}.pth".format(ID, m_domain, m_task, domain, task)
+                name = "./exp/{}/Best_s_{}{}_t_{}{}.pth".format(ID, m_domain, m_task, domain, task)
             else:
-                name = "./exp/exp{}/Best_{}_Task{}.pth".format(ID, domain, task)
+                name = "./exp/{}/Best_{}_Task{}.pth".format(ID, domain, task)
             if SAVE:
                 torch.save(model.state_dict(), name)
             if not TRANSFER:
@@ -253,6 +254,16 @@ if __name__ == '__main__':
     torch.random.manual_seed(SEED)
     train_loader, test_loader = load_data(domain, task, size_train=BATCH_SIZE, size_test=TEST_SIZE)
     rnn = AttenLSTM(input_size=1024, hidden_size=256, batch_first=True, dropout=args.dropout, bidirectional=True, num_layers=2).cuda()
+
+    config = ConfigParser()
+
+    config.read('./exp/{}/config.ini'.format(ID))
+    config.add_section('main')
+    for key, value in vars(args).items():
+        config.set('main', key, str(value))
+
+    with open('config.ini', 'w') as f:
+        config.write(f)
 
     if PRETRAINED:
         rnn.load_state_dict(torch.load("../Pretrained/{}_Task{}.pth".format(domain, task)), strict=True)
