@@ -17,7 +17,7 @@ The official repository of paper: "Check Me If You Can: Detecting ChatGPT-Genera
 Data structure: { {KEY}:{TEXT} }. You may use your own data following this structure.
 
 ## Features
-To turn text into features, use *features.py*[CheckGPT/features.py].
+To turn text into features, use [*features.py*](CheckGPT/features.py).
 
 ## Installation
 Run
@@ -26,7 +26,7 @@ pip install requirements.txt
 ```
 
 ## Usage
-For training, testing and transfer learning, use *dnn.py* as a format:
+For training, testing and transfer learning, use [*dnn.py*](CheckGPT/dnn.py) using this format:
 ```bash
 python dnn.py {SUBJECT} {TASK} {EXP_ID} 
 ```
