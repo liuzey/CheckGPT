@@ -1,10 +1,10 @@
 # CheckGPT
 
+**ATTENTION: For datasets, scripts, and more experiment code, refer to our newer [version](https://github.com/liuzey/CheckGPT-v2) and [artifact](https://zenodo.org/records/11215222).**
+
 ## Description
 
 The official repository of paper: "Check Me If You Can: Detecting ChatGPT-Generated Academic Writing using CheckGPT".
-
-A newer version is available [here](https://github.com/liuzey/CheckGPT-v2). The archived artifact is available on [Zenodo](https://zenodo.org/records/11215222), including the GPABench2 datasets and experiment scripts.
 
 ## Table of Contents
 
